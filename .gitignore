@@ -1,0 +1,14 @@
+venv/
+inventory.yaml
+
+*.pyc
+__pycache__/
+
+.vim-lsp-settings
+.pytest_cache/
+.coverage
+htmlcov/
+
+dist/
+build/
+*.egg-info/
