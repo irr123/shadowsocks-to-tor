@@ -1,0 +1,10 @@
+- name: default
+  hosts: clients
+  become: yes
+
+  vars: {}
+
+  tasks:
+    - name: Print Shadowsocks password
+      ansible.builtin.debug:
+        msg: test
