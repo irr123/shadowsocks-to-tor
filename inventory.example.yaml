@@ -1,18 +1,19 @@
 server:
   hosts:
     srv: &srv_anchor
-      ansible_host: <public address>
+      ansible_host: <public address 1>
       ansible_user: root
-      ansible_ssh_private_key_file: ~/.ssh/.ssh/id_ed25519
+      ansible_ssh_private_key_file: ~/.ssh/id_ed25519
       ss_server_ip_override: 127.0.0.1
 
 clients:
   hosts:
     srv:
+      # this part doesn't work properly, more details here https://bogomolov.work/blog/posts/shadowsocks-to-tor/
       <<: *srv_anchor
       ss_tun_interface_address_cidr: "192.168.7.1/24"
     cl_1:
-      ansible_host: cryptopeer.trade
+      ansible_host: <public address 2>
       ansible_user: root
       ansible_ssh_private_key_file: ~/.ssh/id_ed25519
       ss_tun_interface_address_cidr: "192.168.7.2/24"
