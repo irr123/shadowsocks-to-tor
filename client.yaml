@@ -115,6 +115,8 @@
         content: |
           [Match]
           Name={{ ss_tun_interface_name }}
+          [Link]
+          MTUBytes=1400
         mode: '0644'
       notify: Restart systemd-networkd
 
@@ -138,11 +140,9 @@
             --protocol tun \
             --tun-interface-name {{ ss_tun_interface_name }} \
             --tun-interface-address {{ ss_tun_interface_address_cidr }} \
-            -s {{ ss_server_ip }}:{{ ss_server_port }} \
+            -s {{ ss_server_ip_override | default(ss_server_ip) }}:{{ ss_server_port }} \
             -m {{ ss_encrypt_method }} \
             -k {{ ss_password }} \
-            --outbound-bind-interface {{ ss_outbound_interface }} \
-            --fast-open \
             --udp-timeout 60 \
             -U
 
