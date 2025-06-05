@@ -2,9 +2,156 @@
   hosts: clients
   become: yes
 
-  vars: {}
+  vars:
+    ss_version_tag: "v1.23.4"
+    ss_download_url: "https://github.com/shadowsocks/shadowsocks-rust/releases/download/{{ ss_version_tag }}/shadowsocks-{{ ss_version_tag }}.x86_64-unknown-linux-gnu.tar.xz"
+    ss_archive_filename: "{{ ss_download_url | urlsplit('path') | basename }}"
+    ss_download_temp_path: "/tmp/{{ ss_archive_filename }}"
+    ss_install_dir: "/opt/shadowsocks/{{ ss_version_tag }}"
+    ss_config_filename: "config.json"
+    ss_encrypt_method: "chacha20-ietf-poly1305"
+    ss_user: "ssuser"
+    ss_server_port: 8388
+    ss_server_ip: "{{ hostvars['srv']['ansible_host'] }}"
+    ss_password: "pass it from CLI, see README"
+    ss_tun_interface_name: "tun0"
+    ss_outbound_interface: "{{ ansible_default_ipv4.interface }}"
+    sysctl_params:
+      fs.file-max: '51200'
+      net.core.netdev_max_backlog: '250000'
+      net.core.rmem_max: '67108864'
+      net.core.somaxconn: '4096'
+      net.core.wmem_max: '67108864'
+      net.ipv4.ip_forward: 1
+      net.ipv4.ip_local_port_range: '10000 65000'
+      net.ipv4.tcp_congestion_control: 'hybla'
+      net.ipv4.tcp_fastopen: '3'
+      net.ipv4.tcp_fin_timeout: '30'
+      net.ipv4.tcp_keepalive_time: '1200'
+      net.ipv4.tcp_max_syn_backlog: '8192'
+      net.ipv4.tcp_max_tw_buckets: '5000'
+      net.ipv4.tcp_mem: '25600 51200 102400'
+      net.ipv4.tcp_mtu_probing: '1'
+      net.ipv4.tcp_rmem: '4096 87380 67108864'
+      net.ipv4.tcp_syncookies: '1'
+      net.ipv4.tcp_tw_reuse: '1'
+      net.ipv4.tcp_wmem: '4096 65536 67108864'
+
+  handlers:
+    - name: Restart systemd-networkd
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+
+    - name: Reload systemd and restart shadowsocks-client
+      ansible.builtin.systemd:
+        name: shadowsocks-client
+        daemon_reload: yes
+        state: restarted
+        enabled: yes
 
   tasks:
-    - name: Print Shadowsocks password
-      ansible.builtin.debug:
-        msg: test
+    - name: Configure nofile limits for root user in /etc/security/limits.conf
+      ansible.builtin.blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+          root soft nofile 51200
+          root hard nofile 51200
+        marker: "# {mark} ANSIBLE MANAGED BLOCK for root user limits (Shadowsocks)"
+        state: present
+
+    - name: Apply kernel parameters from sysctl_params
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.conf
+        state: present
+        reload: yes
+      loop: "{{ lookup('dict', sysctl_params) }}"
+
+    - name: Create system user ssuser
+      ansible.builtin.user:
+        name: "{{ ss_user }}"
+        system: yes
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Ensure the installation directory exists
+      ansible.builtin.file:
+        path: "{{ ss_install_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Shadowsocks-Rust archive
+      ansible.builtin.get_url:
+        url: "{{ ss_download_url }}"
+        dest: "{{ ss_download_temp_path }}"
+        mode: '0644'
+
+    - name: Unarchive Shadowsocks-Rust
+      ansible.builtin.unarchive:
+        src: "{{ ss_download_temp_path }}"
+        dest: "{{ ss_install_dir }}"
+        remote_src: yes
+
+    - name: Clean up downloaded archive (optional task)
+      ansible.builtin.file:
+        path: "{{ ss_download_temp_path }}"
+        state: absent
+
+    - name: Create .netdev file for {{ ss_tun_interface_name }}
+      ansible.builtin.copy:
+        dest: "/etc/systemd/network/10-{{ ss_tun_interface_name }}.netdev"
+        content: |
+          [NetDev]
+          Name={{ ss_tun_interface_name }}
+          Kind=tun
+        mode: '0644'
+      notify: Restart systemd-networkd
+
+    - name: Create .network file for {{ ss_tun_interface_name }}
+      ansible.builtin.copy:
+        dest: "/etc/systemd/network/10-{{ ss_tun_interface_name }}.network"
+        content: |
+          [Match]
+          Name={{ ss_tun_interface_name }}
+        mode: '0644'
+      notify: Restart systemd-networkd
+
+    - name: Create Shadowsocks systemd service unit file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/shadowsocks-client.service
+        owner: root
+        group: root
+        content: |
+          [Unit]
+          Description=Shadowsocks-rust Client Service
+          Documentation=https://github.com/shadowsocks/shadowsocks-rust
+          After=network.target network-online.target systemd-networkd.service sys-subsystem-net-devices-tun0.device
+          Wants=network-online.target systemd-networkd.service
+          [Service]
+          Type=simple
+          User={{ ss_user }}
+          Group={{ ss_user }}
+          AmbientCapabilities=CAP_NET_ADMIN
+          ExecStart={{ ss_install_dir }}/sslocal \
+            --protocol tun \
+            --tun-interface-name {{ ss_tun_interface_name }} \
+            --tun-interface-address {{ ss_tun_interface_address_cidr }} \
+            -s {{ ss_server_ip }}:{{ ss_server_port }} \
+            -m {{ ss_encrypt_method }} \
+            -k {{ ss_password }} \
+            --outbound-bind-interface {{ ss_outbound_interface }} \
+            --fast-open \
+            --udp-timeout 60 \
+            -U
+
+          WorkingDirectory={{ ss_install_dir }}
+          LimitNOFILE=51200
+          Restart=always
+          RestartSec=5s
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      notify: Reload systemd and restart shadowsocks-client

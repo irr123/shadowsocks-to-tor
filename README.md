@@ -16,4 +16,4 @@ server:
       ansible_host: <address of host>
    ```
 1. execute `ansible-playbook -i inventory.yaml server.yaml`
-1. execute `ansible-playbook -i inventory.yaml client.yaml`
+1. execute `ansible-playbook -i inventory.yaml client.yaml --extra-vars "ss_password=YOUR_ACTUAL_SS_PASSWORD"`
